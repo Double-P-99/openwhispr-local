@@ -53,7 +53,7 @@ logger = logging.getLogger("whisper_bridge")
 
 # ─── Configuration defaults ──────────────────────────────────────────────────
 DEFAULT_PORT = 9876
-WHISPER_PORT_RANGE = range(8178, 8200)
+WHISPER_PORT_RANGE = range(8178, 8200)  # inclusive 8178–8199 (range end is exclusive)
 DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 TRANSCRIPTION_TIMEOUT = 120  # seconds
 
@@ -174,9 +174,11 @@ async def handle_connection(
 
                 audio_bytes = b"".join(session.audio_chunks)
                 if len(audio_bytes) > max_bytes:
+                    audio_mb = len(audio_bytes) / (1024 * 1024)
+                    max_mb = max_bytes / (1024 * 1024)
                     await websocket.send(json.dumps({
                         "status": "error",
-                        "message": f"Audio too large ({len(audio_bytes) // 1024} KB). Max is {max_bytes // (1024*1024)} MB.",
+                        "message": f"Audio too large ({audio_mb:.1f} MB). Max allowed is {max_mb:.0f} MB.",
                     }))
                     continue
 

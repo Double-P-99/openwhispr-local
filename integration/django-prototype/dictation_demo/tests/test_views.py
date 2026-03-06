@@ -140,9 +140,9 @@ class TranscribeProxyViewTest(TestCase):
             data={"audio": audio_file, "language": "es"},
         )
 
-        # Verify 'language' was included in the data sent to whisper-server
-        call_kwargs = mock_post.call_args
-        data_sent = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data") or {}
+        # Verify 'language' was included in the data sent to whisper-server.
+        _, kwargs = mock_post.call_args
+        data_sent = kwargs.get("data", {})
         self.assertEqual(data_sent.get("language"), "es")
 
     @patch("dictation_demo.views.requests.post")
@@ -161,6 +161,6 @@ class TranscribeProxyViewTest(TestCase):
             data={"audio": audio_file, "language": "auto"},
         )
 
-        call_kwargs = mock_post.call_args
-        data_sent = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data") or {}
+        _, kwargs = mock_post.call_args
+        data_sent = kwargs.get("data", {})
         self.assertNotIn("language", data_sent)

@@ -105,7 +105,8 @@ def benchmark(args):
         print(f"  Median:      {statistics.median(latencies):.1f} ms")
         if len(latencies) >= 5:
             sorted_l = sorted(latencies)
-            p95_idx = int(len(sorted_l) * 0.95)
+            # Standard percentile: interpolate at the 95th percentile position.
+            p95_idx = min(int(0.95 * (len(sorted_l) - 1)), len(sorted_l) - 1)
             print(f"  P95:         {sorted_l[p95_idx]:.1f} ms")
         print("─" * 60)
 

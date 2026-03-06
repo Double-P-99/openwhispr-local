@@ -343,7 +343,7 @@
         bridgeSocket.binaryType = 'arraybuffer';
 
         bridgeSocket.onopen = () => resolve();
-        bridgeSocket.onerror = () => reject(new Error('Could not connect to local bridge (ws://127.0.0.1:9876). Is whisper_bridge.py running?'));
+        bridgeSocket.onerror = () => reject(new Error(`Could not connect to local bridge (${BRIDGE_WS_URL}). Is whisper_bridge.py running?`));
 
         bridgeSocket.onmessage = (event) => {
           try {

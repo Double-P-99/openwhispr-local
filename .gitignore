@@ -314,3 +314,10 @@ Thumbs.db
 .macos-fast-paste.hash
 .macos-fast-paste.*.hash
 .linux-fast-paste.hash
+
+# Python cache files (integration prototype)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+integration/django-prototype/db.sqlite3

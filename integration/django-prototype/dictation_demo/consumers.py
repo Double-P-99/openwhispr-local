@@ -25,7 +25,7 @@ import io
 import json
 import logging
 
-import requests
+import aiohttp
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.conf import settings
 
@@ -76,7 +76,7 @@ class DictationConsumer(AsyncWebsocketConsumer):
             self._audio_chunks.append(bytes_data)
 
     async def _finalize_transcription(self):
-        """Assemble buffered audio, POST to whisper-server, return result."""
+        """Assemble buffered audio, POST to whisper-server using aiohttp, return result."""
         if not self._audio_chunks:
             await self._send_error("No audio data received.")
             return
@@ -84,8 +84,10 @@ class DictationConsumer(AsyncWebsocketConsumer):
         audio_bytes = b"".join(self._audio_chunks)
         max_bytes = settings.WHISPER_MAX_AUDIO_BYTES
         if len(audio_bytes) > max_bytes:
+            audio_mb = len(audio_bytes) / (1024 * 1024)
+            max_mb = max_bytes / (1024 * 1024)
             await self._send_error(
-                f"Audio too large ({len(audio_bytes) // 1024} KB). Max is {max_bytes // (1024*1024)} MB."
+                f"Audio too large ({audio_mb:.1f} MB). Max allowed is {max_mb:.0f} MB."
             )
             return
 
@@ -94,38 +96,42 @@ class DictationConsumer(AsyncWebsocketConsumer):
         prompt = getattr(self, "_prompt", "")
 
         try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._call_whisper_server(whisper_url, audio_bytes, language, prompt),
-            )
-            await self.send(text_data=json.dumps({"status": "ok", "text": result}))
-        except requests.exceptions.ConnectionError:
+            text = await self._call_whisper_server(whisper_url, audio_bytes, language, prompt)
+            await self.send(text_data=json.dumps({"status": "ok", "text": text}))
+        except aiohttp.ClientConnectionError:
             await self._send_error(
                 "whisper-server is not running. Start OpenWhispr or the standalone whisper-server."
             )
-        except requests.exceptions.Timeout:
+        except aiohttp.ServerTimeoutError:
             await self._send_error("Transcription timed out.")
         except Exception as exc:
             logger.exception("DictationConsumer: transcription error")
             await self._send_error(f"Server error: {exc}")
 
     @staticmethod
-    def _call_whisper_server(
+    async def _call_whisper_server(
         url: str, audio_bytes: bytes, language: str, prompt: str
     ) -> str:
-        files = {"file": ("audio.webm", io.BytesIO(audio_bytes), "audio/webm")}
-        data: dict = {"response_format": "json"}
+        """POST audio to whisper-server using aiohttp (fully async, no thread pool needed)."""
+        form = aiohttp.FormData()
+        form.add_field(
+            "file",
+            io.BytesIO(audio_bytes),
+            filename="audio.webm",
+            content_type="audio/webm",
+        )
+        form.add_field("response_format", "json")
         if language and language != "auto":
-            data["language"] = language
+            form.add_field("language", language)
         if prompt:
-            data["prompt"] = prompt
+            form.add_field("prompt", prompt)
 
-        response = requests.post(url, files=files, data=data, timeout=120)
-        response.raise_for_status()
-        return response.json().get("text", "").strip()
+        timeout = aiohttp.ClientTimeout(total=120)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, data=form) as response:
+                response.raise_for_status()
+                result = await response.json()
+                return result.get("text", "").strip()
 
     async def _send_error(self, message: str):
         await self.send(text_data=json.dumps({"status": "error", "message": message}))

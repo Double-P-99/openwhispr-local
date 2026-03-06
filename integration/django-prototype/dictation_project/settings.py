@@ -6,12 +6,17 @@ production without hardening SECRET_KEY, DEBUG, ALLOWED_HOSTS, databases,
 and CSRF settings.
 """
 
+import os
+import uuid
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-prototype-key-replace-before-production"
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    # Development-only fallback — never use in production without setting DJANGO_SECRET_KEY.
+    f"dev-only-insecure-{uuid.uuid4()}",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -73,8 +78,6 @@ CHANNEL_LAYERS = {
 # The local whisper-server base URL. The Django backend POSTs audio here when
 # the browser uploads audio directly to Django (Path 1 proxy mode).
 # Override via environment variable WHISPER_SERVER_URL.
-import os
-
 WHISPER_SERVER_URL = os.environ.get("WHISPER_SERVER_URL", "http://127.0.0.1:8178")
 
 # Maximum audio upload size in bytes (10 MB default).

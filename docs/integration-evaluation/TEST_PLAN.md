@@ -115,14 +115,7 @@ Run each audio scenario against `base`, `small`, and `turbo` models.
 | TQ-09 | Domain vocabulary + custom dict | Same as TQ-08 with custom dictionary enabled | Improved vs TQ-08 | WER ≤ TQ-08 |
 | TQ-10 | Whisper (base) vs Parakeet (0.6B) | TQ-01 audio | Both produce same text | Same WER ± 5% |
 
-**WER (Word Error Rate) calculation:**
-```python
-def wer(reference, hypothesis):
-    r = reference.lower().split()
-    h = hypothesis.lower().split()
-    # Levenshtein distance / len(reference)
-    ...
-```
+**WER (Word Error Rate) calculation:** See Section 5.2 for the complete `jiwer`-based implementation.
 
 ### 2.2 Latency Tests
 
