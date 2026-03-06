@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Push-to-Talk Dictation — OpenWhispr</title>
+  <style>
+    /* ------------------------------------------------------------------ */
+    /* Reset & base                                                         */
+    /* ------------------------------------------------------------------ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Card                                                                 */
+    /* ------------------------------------------------------------------ */
+    .card {
+      background: #fff;
+      border-radius: 18px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      padding: 2.5rem 2rem;
+      width: min(600px, 95vw);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: .25rem;
+    }
+
+    .subtitle {
+      color: #6e6e73;
+      font-size: .9rem;
+      margin-bottom: 1.75rem;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Status badge                                                         */
+    /* ------------------------------------------------------------------ */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      margin-bottom: 1.25rem;
+      font-size: .85rem;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #34c759;          /* green = ready */
+      flex-shrink: 0;
+    }
+
+    .dot.recording {
+      background: #ff3b30;           /* red = recording */
+      animation: pulse 1s ease-in-out infinite;
+    }
+
+    .dot.busy {
+      background: #ff9f0a;           /* amber = transcribing */
+    }
+
+    .dot.offline {
+      background: #aeaeb2;           /* grey = companion not running */
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .35; }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Textarea                                                             */
+    /* ------------------------------------------------------------------ */
+    label {
+      display: block;
+      font-size: .85rem;
+      font-weight: 600;
+      margin-bottom: .4rem;
+    }
+
+    textarea {
+      width: 100%;
+      height: 180px;
+      border: 1.5px solid #d1d1d6;
+      border-radius: 10px;
+      padding: .75rem 1rem;
+      font-size: 1rem;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+      transition: border-color .15s;
+    }
+
+    textarea:focus { border-color: #0071e3; }
+
+    /* ------------------------------------------------------------------ */
+    /* Buttons                                                              */
+    /* ------------------------------------------------------------------ */
+    .btn-row {
+      display: flex;
+      gap: .75rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    button {
+      cursor: pointer;
+      border: none;
+      border-radius: 10px;
+      font-size: .95rem;
+      font-weight: 600;
+      padding: .65rem 1.5rem;
+      transition: opacity .15s, transform .1s;
+    }
+
+    button:active { transform: scale(.97); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+
+    #btn-start {
+      background: #0071e3;
+      color: #fff;
+      font-size: 1.05rem;
+      padding: .75rem 2rem;
+    }
+
+    #btn-stop {
+      background: #ff3b30;
+      color: #fff;
+    }
+
+    #btn-clear {
+      background: #f2f2f7;
+      color: #1d1d1f;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Push-to-talk mode                                                   */
+    /* ------------------------------------------------------------------ */
+    .ptt-hint {
+      font-size: .8rem;
+      color: #6e6e73;
+      margin-top: .5rem;
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Error / info banner                                                  */
+    /* ------------------------------------------------------------------ */
+    .banner {
+      display: none;
+      margin-top: 1rem;
+      padding: .6rem 1rem;
+      border-radius: 8px;
+      font-size: .85rem;
+    }
+
+    .banner.error   { background: #fff0f0; color: #c41e3a; display: block; }
+    .banner.info    { background: #f0f4ff; color: #0050a0; display: block; }
+    .banner.success { background: #f0fff4; color: #1a6e3b; display: block; }
+
+    /* ------------------------------------------------------------------ */
+    /* Transport mode selector                                              */
+    /* ------------------------------------------------------------------ */
+    .mode-row {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1.25rem;
+      font-size: .85rem;
+    }
+
+    .mode-row label {
+      display: flex;
+      align-items: center;
+      gap: .3rem;
+      font-weight: 400;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <h1>🎤 Voice Dictation</h1>
+  <p class="subtitle">
+    Powered by OpenWhispr — transcription runs locally, no data leaves your machine.
+  </p>
+
+  <!-- Companion status -->
+  <div class="status-row">
+    <div class="dot offline" id="status-dot"></div>
+    <span id="status-text">Checking companion service…</span>
+  </div>
+
+  <!-- Transport mode selector -->
+  <div class="mode-row">
+    <label>
+      <input type="radio" name="transport" value="http" checked /> HTTP (POST /start + /stop)
+    </label>
+    <label>
+      <input type="radio" name="transport" value="ws" /> WebSocket (real-time)
+    </label>
+  </div>
+
+  <!-- Transcript textarea -->
+  <label for="transcript">Transcript</label>
+  <textarea id="transcript" placeholder="Your speech will appear here…" spellcheck="true"></textarea>
+
+  <!-- Buttons -->
+  <div class="btn-row">
+    <button id="btn-start" disabled>🎤 Start Dictation</button>
+    <button id="btn-stop"  disabled>⏹ Stop</button>
+    <button id="btn-clear">🗑 Clear</button>
+  </div>
+
+  <p class="ptt-hint">
+    Tip: hold <kbd>Space</kbd> or click <em>Start Dictation</em> to record, release / click <em>Stop</em> to transcribe.
+  </p>
+
+  <!-- Banner messages -->
+  <div class="banner" id="banner"></div>
+</div>
+
+<script>
+  "use strict";
+
+  // -----------------------------------------------------------------------
+  // Configuration — injected by Django template
+  // -----------------------------------------------------------------------
+  const COMPANION_HTTP = "{{ companion_url }}";
+  const COMPANION_WS   = COMPANION_HTTP.replace(/^http/, "ws") + "/ws";
+
+  // -----------------------------------------------------------------------
+  // DOM refs
+  // -----------------------------------------------------------------------
+  const textarea   = document.getElementById("transcript");
+  const btnStart   = document.getElementById("btn-start");
+  const btnStop    = document.getElementById("btn-stop");
+  const btnClear   = document.getElementById("btn-clear");
+  const statusDot  = document.getElementById("status-dot");
+  const statusText = document.getElementById("status-text");
+  const banner     = document.getElementById("banner");
+
+  // -----------------------------------------------------------------------
+  // State
+  // -----------------------------------------------------------------------
+  let companionReady = false;
+  let isRecording    = false;
+  let ws             = null;   // WebSocket instance (WS mode only)
+
+  // -----------------------------------------------------------------------
+  // Helpers
+  // -----------------------------------------------------------------------
+
+  function showBanner(message, type /* "error" | "info" | "success" */) {
+    banner.textContent = message;
+    banner.className   = "banner " + type;
+  }
+
+  function hideBanner() {
+    banner.className = "banner";
+  }
+
+  function setStatus(state, label) {
+    statusDot.className  = "dot " + (state || "");
+    statusText.textContent = label;
+  }
+
+  function insertTranscript(text) {
+    if (!text) return;
+    const cur = textarea.value;
+    textarea.value = cur ? cur + " " + text : text;
+    // Move cursor to end
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
+  }
+
+  function getTransportMode() {
+    return document.querySelector('input[name="transport"]:checked').value;
+  }
+
+  // -----------------------------------------------------------------------
+  // Poll companion /status to know when it is ready
+  // -----------------------------------------------------------------------
+
+  async function pollStatus() {
+    try {
+      const res  = await fetch(COMPANION_HTTP + "/status", { signal: AbortSignal.timeout(2000) });
+      const data = await res.json();
+      companionReady = data.ready === true;
+      if (companionReady) {
+        setStatus("", `Ready — model: ${data.model}`);
+        btnStart.disabled = false;
+        return true;
+      }
+    } catch {
+      setStatus("offline", "Companion not running — start companion/server.py");
+      btnStart.disabled = true;
+      btnStop.disabled  = true;
+      showBanner(
+        "⚠ The local companion service is not reachable at " + COMPANION_HTTP +
+        ". Run: uvicorn companion.server:app --port 8765",
+        "error"
+      );
+    }
+    return false;
+  }
+
+  // -----------------------------------------------------------------------
+  // HTTP transport
+  // -----------------------------------------------------------------------
+
+  async function httpStart() {
+    hideBanner();
+    try {
+      const res = await fetch(COMPANION_HTTP + "/start", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || res.statusText);
+      }
+      isRecording      = true;
+      btnStart.disabled = true;
+      btnStop.disabled  = false;
+      setStatus("recording", "Recording…");
+    } catch (err) {
+      showBanner("Start failed: " + err.message, "error");
+    }
+  }
+
+  async function httpStop() {
+    hideBanner();
+    try {
+      btnStop.disabled = true;
+      setStatus("busy", "Transcribing…");
+      const res = await fetch(COMPANION_HTTP + "/stop", { method: "POST" });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || res.statusText);
+      }
+      const data = await res.json();
+      insertTranscript(data.transcript);
+      showBanner(
+        `✓ Transcribed ${data.duration_seconds}s of audio.`,
+        "success"
+      );
+    } catch (err) {
+      showBanner("Stop/transcribe failed: " + err.message, "error");
+    } finally {
+      isRecording       = false;
+      btnStart.disabled = !companionReady;
+      btnStop.disabled  = true;
+      setStatus("", "Ready");
+      // Refresh status to get accurate model name
+      pollStatus();
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // WebSocket transport
+  // -----------------------------------------------------------------------
+
+  function wsConnect() {
+    return new Promise((resolve, reject) => {
+      ws = new WebSocket(COMPANION_WS);
+
+      ws.onopen  = () => resolve(ws);
+      ws.onerror = (e) => reject(new Error("WebSocket connection failed"));
+
+      ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+
+        switch (msg.event) {
+          case "recording_started":
+            isRecording      = true;
+            btnStart.disabled = true;
+            btnStop.disabled  = false;
+            setStatus("recording", "Recording…");
+            hideBanner();
+            break;
+
+          case "transcribing":
+            btnStop.disabled = true;
+            setStatus("busy", "Transcribing…");
+            break;
+
+          case "result":
+            insertTranscript(msg.transcript);
+            isRecording       = false;
+            btnStart.disabled = !companionReady;
+            btnStop.disabled  = true;
+            setStatus("", "Ready");
+            showBanner(
+              `✓ Transcribed ${msg.duration_seconds}s of audio.`,
+              "success"
+            );
+            break;
+
+          case "error":
+            showBanner("Companion error: " + msg.message, "error");
+            isRecording       = false;
+            btnStart.disabled = !companionReady;
+            btnStop.disabled  = true;
+            setStatus("", "Ready");
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        ws = null;
+        if (isRecording) {
+          showBanner("WebSocket connection lost during recording.", "error");
+          isRecording       = false;
+          btnStart.disabled = !companionReady;
+          btnStop.disabled  = true;
+          setStatus("", "Ready");
+        }
+      };
+    });
+  }
+
+  async function wsStart() {
+    hideBanner();
+    try {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        await wsConnect();
+      }
+      ws.send("start");
+    } catch (err) {
+      showBanner("WebSocket start failed: " + err.message, "error");
+    }
+  }
+
+  async function wsStop() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showBanner("WebSocket not connected.", "error");
+      return;
+    }
+    ws.send("stop");
+  }
+
+  // -----------------------------------------------------------------------
+  // Button handlers
+  // -----------------------------------------------------------------------
+
+  btnStart.addEventListener("click", () => {
+    getTransportMode() === "ws" ? wsStart() : httpStart();
+  });
+
+  btnStop.addEventListener("click", () => {
+    getTransportMode() === "ws" ? wsStop() : httpStop();
+  });
+
+  btnClear.addEventListener("click", () => {
+    textarea.value = "";
+    hideBanner();
+  });
+
+  // -----------------------------------------------------------------------
+  // Push-to-talk via Space bar (optional keyboard UX)
+  // -----------------------------------------------------------------------
+
+  document.addEventListener("keydown", (e) => {
+    // Only activate when not typing in the textarea
+    if (document.activeElement === textarea) return;
+    if (e.code === "Space" && !e.repeat && !isRecording && companionReady) {
+      e.preventDefault();
+      btnStart.click();
+    }
+  });
+
+  document.addEventListener("keyup", (e) => {
+    if (document.activeElement === textarea) return;
+    if (e.code === "Space" && isRecording) {
+      e.preventDefault();
+      btnStop.click();
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // Radio button changes — disconnect WebSocket when switching to HTTP
+  // -----------------------------------------------------------------------
+  document.querySelectorAll('input[name="transport"]').forEach((radio) => {
+    radio.addEventListener("change", () => {
+      if (radio.value !== "ws" && ws) {
+        ws.close();
+        ws = null;
+      }
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Initialise
+  // -----------------------------------------------------------------------
+  (async () => {
+    const ok = await pollStatus();
+    if (!ok) {
+      // Retry every 5 seconds until companion comes up
+      const interval = setInterval(async () => {
+        const ready = await pollStatus();
+        if (ready) clearInterval(interval);
+      }, 5000);
+    }
+  })();
+</script>
+
+</body>
+</html>
