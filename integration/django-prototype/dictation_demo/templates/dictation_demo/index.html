@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OpenWhispr Django Prototype</title>
+  {% load static %}
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f4f4f5;
+      color: #18181b;
+      padding: 2rem;
+    }
+    h1 { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.25rem; }
+    .subtitle { color: #71717a; font-size: 0.875rem; margin-bottom: 2rem; }
+    .card {
+      background: #fff;
+      border: 1px solid #e4e4e7;
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      max-width: 720px;
+    }
+    .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0.75rem; }
+    .field-row { display: flex; gap: 0.75rem; align-items: flex-start; margin-bottom: 1.25rem; }
+    textarea {
+      flex: 1;
+      height: 120px;
+      border: 1px solid #d4d4d8;
+      border-radius: 0.5rem;
+      padding: 0.625rem 0.75rem;
+      font-size: 0.9rem;
+      resize: vertical;
+    }
+    textarea:focus { outline: 2px solid #6366f1; border-color: #6366f1; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.5rem 1rem;
+      border-radius: 0.5rem;
+      border: none;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn-primary { background: #6366f1; color: #fff; }
+    .btn-primary:hover { background: #4f46e5; }
+    .btn-danger { background: #ef4444; color: #fff; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-secondary { background: #e4e4e7; color: #3f3f46; }
+    .btn-secondary:hover { background: #d4d4d8; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .controls { display: flex; flex-direction: column; gap: 0.5rem; min-width: 130px; }
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 999px;
+      font-weight: 500;
+    }
+    .badge-idle { background: #f4f4f5; color: #71717a; }
+    .badge-recording { background: #fef2f2; color: #ef4444; }
+    .badge-processing { background: #eff6ff; color: #3b82f6; }
+    .badge-done { background: #f0fdf4; color: #16a34a; }
+    .badge-error { background: #fef2f2; color: #dc2626; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: currentColor;
+    }
+    .dot-pulse { animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .mode-tabs { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+    .mode-tab {
+      padding: 0.35rem 0.75rem;
+      border-radius: 0.375rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: 1px solid #d4d4d8;
+      background: #fff;
+      cursor: pointer;
+    }
+    .mode-tab.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+    .section-label { font-size: 0.8rem; color: #71717a; margin-bottom: 0.25rem; }
+    select {
+      padding: 0.35rem 0.5rem;
+      border: 1px solid #d4d4d8;
+      border-radius: 0.375rem;
+      font-size: 0.8rem;
+      background: #fff;
+    }
+    .info-box {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      font-size: 0.8rem;
+      color: #1d4ed8;
+      margin-bottom: 1rem;
+    }
+    .error-box {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 0.5rem;
+      padding: 0.75rem 1rem;
+      font-size: 0.8rem;
+      color: #dc2626;
+      margin-top: 0.5rem;
+      display: none;
+    }
+    .latency-label { font-size: 0.75rem; color: #71717a; margin-top: 0.25rem; text-align: center; }
+    hr { border: none; border-top: 1px solid #e4e4e7; margin: 1.5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>OpenWhispr Django Integration Prototype</h1>
+  <p class="subtitle">
+    Demonstrates two integration paths: (1) audio → Django proxy → whisper-server,
+    and (2) audio → local WebSocket bridge → whisper-server.
+  </p>
+
+  <div class="card">
+    <h2>Integration Mode</h2>
+    <div class="mode-tabs">
+      <button class="mode-tab active" onclick="setMode('proxy')" id="tab-proxy">
+        Path 1 — Django Proxy
+      </button>
+      <button class="mode-tab" onclick="setMode('bridge')" id="tab-bridge">
+        Path 2 — Local Bridge (WS)
+      </button>
+    </div>
+    <div id="info-proxy" class="info-box">
+      <strong>Path 1:</strong> Audio is uploaded to <code>/api/transcribe/</code> (Django view),
+      which proxies it to the local <code>whisper-server</code> on port 8178.
+      Requires whisper-server running locally. All traffic goes through Django.
+    </div>
+    <div id="info-bridge" class="info-box" style="display:none">
+      <strong>Path 2:</strong> Browser connects directly to the local WebSocket bridge
+      (<code>ws://127.0.0.1:9876</code>). Django only serves this HTML page.
+      Audio goes browser → bridge → whisper-server. Lower latency, fewer hops.
+    </div>
+
+    <p class="section-label">Language</p>
+    <select id="language-select">
+      <option value="auto">Auto-detect</option>
+      <option value="en">English</option>
+      <option value="es">Spanish</option>
+      <option value="fr">French</option>
+      <option value="de">German</option>
+      <option value="pt">Portuguese</option>
+      <option value="it">Italian</option>
+      <option value="ru">Russian</option>
+      <option value="ja">Japanese</option>
+      <option value="zh">Chinese</option>
+    </select>
+  </div>
+
+  <!-- Field 1 -->
+  <div class="card">
+    <h2>Field 1 — Short Note</h2>
+    <div class="field-row">
+      <textarea id="field-1" placeholder="Click 'Start Dictation' to begin…"></textarea>
+      <div class="controls">
+        <button class="btn btn-primary" onclick="startDictation('field-1', this)" id="start-1">
+          <span>🎙</span> Start
+        </button>
+        <button class="btn btn-danger" onclick="stopDictation('field-1')" id="stop-1" disabled>
+          <span>⏹</span> Stop
+        </button>
+        <button class="btn btn-secondary" onclick="clearField('field-1')">Clear</button>
+        <span class="status-badge badge-idle" id="status-1">
+          <span class="dot"></span> Idle
+        </span>
+        <span class="latency-label" id="latency-1"></span>
+      </div>
+    </div>
+    <div class="error-box" id="error-1"></div>
+  </div>
+
+  <!-- Field 2 -->
+  <div class="card">
+    <h2>Field 2 — Longer Dictation</h2>
+    <div class="field-row">
+      <textarea id="field-2" style="height:180px" placeholder="Click 'Start Dictation' to begin…"></textarea>
+      <div class="controls">
+        <button class="btn btn-primary" onclick="startDictation('field-2', this)" id="start-2">
+          <span>🎙</span> Start
+        </button>
+        <button class="btn btn-danger" onclick="stopDictation('field-2')" id="stop-2" disabled>
+          <span>⏹</span> Stop
+        </button>
+        <button class="btn btn-secondary" onclick="clearField('field-2')">Clear</button>
+        <span class="status-badge badge-idle" id="status-2">
+          <span class="dot"></span> Idle
+        </span>
+        <span class="latency-label" id="latency-2"></span>
+      </div>
+    </div>
+    <div class="error-box" id="error-2"></div>
+  </div>
+
+  <script>
+    // ─── State ────────────────────────────────────────────────────────────────
+    let currentMode = 'proxy';
+    let activeRecorder = null;      // MediaRecorder instance
+    let activeFieldId = null;       // which textarea is receiving dictation
+    let audioChunks = [];
+    let recordingStartTime = null;
+    let bridgeSocket = null;        // WebSocket to local bridge (Path 2)
+
+    // The local bridge WebSocket URL is injected from Django settings.
+    const BRIDGE_WS_URL = "{{ bridge_ws_url }}";
+    // CSRF token from cookie for Django AJAX requests.
+    const CSRF_TOKEN = getCookie('csrftoken');
+
+    // ─── Mode switching ───────────────────────────────────────────────────────
+    function setMode(mode) {
+      currentMode = mode;
+      document.getElementById('tab-proxy').classList.toggle('active', mode === 'proxy');
+      document.getElementById('tab-bridge').classList.toggle('active', mode === 'bridge');
+      document.getElementById('info-proxy').style.display = mode === 'proxy' ? '' : 'none';
+      document.getElementById('info-bridge').style.display = mode === 'bridge' ? '' : 'none';
+    }
+
+    // ─── Start dictation ──────────────────────────────────────────────────────
+    async function startDictation(fieldId, btn) {
+      if (activeRecorder) {
+        showError(fieldId, "A recording is already in progress.");
+        return;
+      }
+
+      hideError(fieldId);
+      setStatus(fieldId, 'recording', '● Recording');
+      document.getElementById('start-' + fieldId.split('-')[1]).disabled = true;
+      document.getElementById('stop-' + fieldId.split('-')[1]).disabled = false;
+      document.getElementById('latency-' + fieldId.split('-')[1]).textContent = '';
+
+      activeFieldId = fieldId;
+      audioChunks = [];
+      recordingStartTime = performance.now();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        activeRecorder = new MediaRecorder(stream, { mimeType: bestMimeType() });
+
+        if (currentMode === 'bridge') {
+          // Path 2: open WebSocket to bridge and stream audio
+          await openBridge(fieldId);
+          activeRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0 && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+              bridgeSocket.send(e.data);
+            }
+          };
+          bridgeSocket.send(JSON.stringify({
+            action: 'start',
+            language: document.getElementById('language-select').value,
+          }));
+        } else {
+          // Path 1: accumulate chunks, upload when stopped
+          activeRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        }
+
+        activeRecorder.start(250); // collect in 250 ms chunks
+      } catch (err) {
+        activeRecorder = null;
+        activeFieldId = null;
+        setStatus(fieldId, 'error', '✕ Error');
+        showError(fieldId, `Microphone error: ${err.message}`);
+        resetButtons(fieldId);
+      }
+    }
+
+    // ─── Stop dictation ───────────────────────────────────────────────────────
+    function stopDictation(fieldId) {
+      if (!activeRecorder) return;
+      setStatus(fieldId, 'processing', '⟳ Processing…');
+      document.getElementById('stop-' + fieldId.split('-')[1]).disabled = true;
+
+      activeRecorder.onstop = async () => {
+        const tracks = activeRecorder.stream.getTracks();
+        tracks.forEach(t => t.stop());
+
+        if (currentMode === 'bridge') {
+          // Tell bridge to finalise; result comes back over WS
+          if (bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+            bridgeSocket.send(JSON.stringify({ action: 'stop' }));
+          }
+        } else {
+          // Path 1: POST audio blob to Django
+          await uploadAudio(fieldId);
+        }
+
+        activeRecorder = null;
+        resetButtons(fieldId);
+      };
+
+      activeRecorder.stop();
+    }
+
+    // ─── Path 1: upload audio to Django proxy ─────────────────────────────────
+    async function uploadAudio(fieldId) {
+      const blob = new Blob(audioChunks, { type: bestMimeType() });
+      const lang = document.getElementById('language-select').value;
+      const form = new FormData();
+      form.append('audio', blob, 'recording.webm');
+      if (lang !== 'auto') form.append('language', lang);
+
+      const t0 = performance.now();
+      try {
+        const resp = await fetch('/api/transcribe/', {
+          method: 'POST',
+          headers: { 'X-CSRFToken': CSRF_TOKEN },
+          body: form,
+        });
+        const data = await resp.json();
+        const elapsed = ((performance.now() - t0) / 1000).toFixed(2);
+
+        if (!resp.ok || data.error) {
+          showError(fieldId, data.error || `HTTP ${resp.status}`);
+          setStatus(fieldId, 'error', '✕ Error');
+        } else {
+          insertText(fieldId, data.text);
+          setStatus(fieldId, 'done', '✓ Done');
+          document.getElementById('latency-' + fieldId.split('-')[1]).textContent =
+            `Transcription: ${elapsed}s`;
+        }
+      } catch (err) {
+        showError(fieldId, `Network error: ${err.message}`);
+        setStatus(fieldId, 'error', '✕ Error');
+      }
+    }
+
+    // ─── Path 2: WebSocket bridge ─────────────────────────────────────────────
+    function openBridge(fieldId) {
+      return new Promise((resolve, reject) => {
+        bridgeSocket = new WebSocket(BRIDGE_WS_URL);
+        bridgeSocket.binaryType = 'arraybuffer';
+
+        bridgeSocket.onopen = () => resolve();
+        bridgeSocket.onerror = () => reject(new Error(`Could not connect to local bridge (${BRIDGE_WS_URL}). Is whisper_bridge.py running?`));
+
+        bridgeSocket.onmessage = (event) => {
+          try {
+            const msg = JSON.parse(event.data);
+            const elapsed = ((performance.now() - recordingStartTime) / 1000).toFixed(2);
+            const fNum = fieldId.split('-')[1];
+            if (msg.status === 'ok') {
+              insertText(fieldId, msg.text);
+              setStatus(fieldId, 'done', '✓ Done');
+              document.getElementById('latency-' + fNum).textContent = `Total: ${elapsed}s`;
+            } else {
+              showError(fieldId, msg.message || 'Bridge error');
+              setStatus(fieldId, 'error', '✕ Error');
+            }
+          } catch (_) {}
+        };
+
+        bridgeSocket.onclose = () => { bridgeSocket = null; };
+      });
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+    function insertText(fieldId, text) {
+      const ta = document.getElementById(fieldId);
+      if (!text) return;
+      const existing = ta.value;
+      ta.value = existing ? existing + ' ' + text : text;
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    function clearField(fieldId) {
+      document.getElementById(fieldId).value = '';
+      setStatus(fieldId, 'idle', 'Idle');
+      hideError(fieldId);
+      document.getElementById('latency-' + fieldId.split('-')[1]).textContent = '';
+    }
+
+    function setStatus(fieldId, state, label) {
+      const el = document.getElementById('status-' + fieldId.split('-')[1]);
+      el.className = `status-badge badge-${state}`;
+      const dot = el.querySelector('.dot');
+      dot.className = 'dot' + (state === 'recording' ? ' dot-pulse' : '');
+      el.innerHTML = `<span class="dot${state === 'recording' ? ' dot-pulse' : ''}"></span> ${label}`;
+    }
+
+    function resetButtons(fieldId) {
+      const n = fieldId.split('-')[1];
+      document.getElementById('start-' + n).disabled = false;
+      document.getElementById('stop-' + n).disabled = true;
+    }
+
+    function showError(fieldId, msg) {
+      const el = document.getElementById('error-' + fieldId.split('-')[1]);
+      el.textContent = '⚠ ' + msg;
+      el.style.display = 'block';
+    }
+
+    function hideError(fieldId) {
+      const el = document.getElementById('error-' + fieldId.split('-')[1]);
+      el.style.display = 'none';
+    }
+
+    function bestMimeType() {
+      const types = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+      for (const t of types) {
+        if (MediaRecorder.isTypeSupported(t)) return t;
+      }
+      return '';
+    }
+
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return '';
+    }
+  </script>
+</body>
+</html>
